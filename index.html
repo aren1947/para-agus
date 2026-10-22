@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fbe4ea">
+  <meta name="robots" content="noindex">
+  <title>3 años</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=DM+Sans:opsz,wght@9..40,400;9..40,700&family=Cormorant+Garamond:wght@500&display=swap" rel="stylesheet">
+  <style>
+    /* La puerta: pide la contraseña, descifra datos.bin y muestra la página (la arma publicar.py). */
+    :root { --papel: #fdf0f3; --papel-hondo: #fbe4ea; --tinta: #3a1424; --tinta-suave: #7d4a5e; --rosa: #e0457b; --rosa-hondo: #c22a62; }
+    * { box-sizing: border-box; }
+    html { background: linear-gradient(var(--papel-hondo), var(--papel)) fixed; }
+    body {
+      margin: 0;
+      min-height: 100svh;
+      display: grid;
+      place-items: center;
+      padding: 24px 16px;
+      color: var(--tinta);
+      font: 17px/1.5 "DM Sans", system-ui, sans-serif;
+      text-align: center;
+    }
+    h1 { margin: 0; font: 500 4.2rem/.9 "Cormorant Garamond", Georgia, serif; color: var(--rosa-hondo); }
+    .numero { display: block; font-size: 2.3em; }
+    p { margin: 1.2rem 0 .8rem; font: 600 1.6rem/1.2 "Caveat", cursive; color: var(--tinta-suave); }
+    form { display: grid; gap: .8rem; width: min(100%, 300px); margin: 0 auto; }
+    input {
+      font: 700 1.4rem "DM Sans", sans-serif;
+      text-align: center;
+      letter-spacing: .12em;
+      padding: .7rem 1rem;
+      border: 2px solid #f8cfdc;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--tinta);
+      outline: none;
+    }
+    input:focus { border-color: var(--rosa); }
+    button {
+      font: 700 1.05rem "DM Sans", sans-serif;
+      padding: .8rem 1rem;
+      border: 0;
+      border-radius: 999px;
+      background: var(--rosa-hondo);
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .6; }
+    .estado { min-height: 1.5em; margin: .4rem 0 0; font: 1rem "DM Sans", sans-serif; color: var(--tinta-suave); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1><span class="numero">3</span> años</h1>
+    <p>¿Cuándo empezó todo?</p>
+    <form>
+      <input name="clave" inputmode="numeric" autocomplete="off" placeholder="dd/mm/aa" aria-label="Contraseña" required>
+      <button>Entrar</button>
+    </form>
+    <p class="estado" aria-live="polite"></p>
+  </main>
+  <script>
+    // Se empieza a bajar mientras ella escribe.
+    const datos = fetch("datos.bin").then((r) => {
+      if (!r.ok) throw new Error(r.status);
+      return r.arrayBuffer();
+    });
+    const form = document.querySelector("form");
+    const boton = form.querySelector("button");
+    const estado = document.querySelector(".estado");
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const clave = form.clave.value.replace(/\D/g, ""); // solo los números: 29/10/23 = 291023
+      boton.disabled = true;
+      estado.textContent = "Abriendo…";
+      let todo;
+      try {
+        todo = new Uint8Array(await datos);
+      } catch {
+        estado.textContent = "No se pudo cargar. Revisá la conexión y probá de nuevo.";
+        boton.disabled = false;
+        return;
+      }
+      const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(clave), "PBKDF2", false, ["deriveKey"]);
+      const llave = await crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: todo.subarray(0, 16), iterations: 600000, hash: "SHA-256" },
+        base, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
+      );
+      let plano;
+      try {
+        plano = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: todo.subarray(16, 28) }, llave, todo.subarray(28)));
+      } catch {
+        estado.textContent = "Esa no es 😌 Probá de nuevo";
+        boton.disabled = false;
+        return;
+      }
+      // [largo del índice][índice JSON][fotos y stickers]
+      const largo = new DataView(plano.buffer).getUint32(0, true);
+      const indice = JSON.parse(new TextDecoder().decode(plano.subarray(4, 4 + largo)));
+      const cuerpo = plano.subarray(4 + largo);
+      window.ARCHIVOS = {};
+      for (const [ruta, [desde, cuanto, tipo]] of Object.entries(indice.archivos)) {
+        window.ARCHIVOS[ruta] = URL.createObjectURL(new Blob([cuerpo.subarray(desde, desde + cuanto)], { type: tipo }));
+      }
+      document.open();
+      document.write(indice.html);
+      document.close();
+    };
+  </script>
+</body>
+</html>
